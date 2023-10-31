@@ -122,5 +122,5 @@ queryMiddleware(knexInstance);
 // Export the Knex instance and Redis client for use in other parts of your application
 module.exports = {
   knexInstance,
-  redisClient,
+  // redisClient,
 };
