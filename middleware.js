@@ -38,6 +38,7 @@ const redisClient = new redis({
   // Optional: password: 'your_password',
 });
 
+
 const queryMiddleware = (queryBuilder) => {
   queryBuilder.on("query", async (queryData) => {
     try {
@@ -55,7 +56,7 @@ const queryMiddleware = (queryBuilder) => {
       // Check if the query method is 'select'
       if (queryData.method === "select") {
         // Check if the query is specific to a user (e.g., /users/1)
-        const isUserSpecificQuery = /FROM users WHERE .+ = \?/.test(queryData.sql);
+        const isUserSpecificQuery = ("select * from `users` where `id` = ?" == queryData.sql);
 
         // Log that a 'select' query is being processed
         console.log("Here, Using select - get");
@@ -63,33 +64,49 @@ const queryMiddleware = (queryBuilder) => {
 
         if (knexInstance.useCache && isUserSpecificQuery) {
           // It's a user-specific query, and caching is enabled
-          const userId = extractUserIdFromQuery(queryData); // Extract user ID from the query
-          if (userId !== null) {
-            const cacheKey = `user:${userId}`;
-            const cachedResult = await redisClient.get(cacheKey);
-            if (cachedResult && knexInstance.useCache) {
+          const sql = queryData.sql;
+          const cacheKey = `query:${sql}`;
+          const cachedResult = await redisClient.get(cacheKey);
+          if (cachedResult && knexInstance.useCache) {
+            if (Array.isArray(cachedResult)) {
               // Data is cached; return it
-              queryData.response = JSON.parse(cachedResult);
+              queryData.response = cachedResult;
               console.log("Using cached data");
               return;
             }
           }
-        }
-        
-        // Data is not found in the cache or caching is disabled; fetch it from the database
-        const result = await queryData;
-        if (knexInstance.useCache) {
-          // Cache the result data
-          const userId = extractUserIdFromQuery(queryData); // Extract user ID from the query
-          if (userId !== null) {
-            const cacheKey = `user:${userId}`;
+          
+          // Data is not found in the cache; fetch it from the database
+          const result = await queryData;
+          if (knexInstance.useCache) {
+            // Cache the result data
             redisClient.set(cacheKey, JSON.stringify(result), "EX", 3600);
             console.log("Caching data");
           }
           queryData.response = result;
-        } else {
+        } 
+        
+        else {
+          // For non-specific user queries or when caching is disabled, execute the query without caching
+          // console.log("Not a user specific query or caching is disabled");
+          const result = await queryData;
           queryData.response = result;
         }
+
+
+      } else if (queryData.method === "update" || queryData.method === "del") {
+        // For 'update' and 'delete' queries, execute the query
+        await queryData;
+
+        // Determine the cache key to invalidate based on the query method
+        const sql = queryData.sql;
+        // const cacheKeyToInvalidate =
+          // queryData.method === "update" ? `user:${userId}` : `query:${sql}`;
+        
+        const cacheKeyToInvalidate = `query:${sql}`;
+
+        // Remove the cached data associated with the cache key
+        redisClient.del(cacheKeyToInvalidate);
       }
     } catch (error) {
       // Log any errors that occur during the middleware processing
@@ -97,22 +114,7 @@ const queryMiddleware = (queryBuilder) => {
     }
   });
 };
-// Implement the function to extract the user ID from the query
-function extractUserIdFromQuery(queryData) {
-  if (queryData.sql) {
-    // Assuming the query structure is similar to "UPDATE users SET ... WHERE id = ?"
-    const match = queryData.sql.match(/WHERE id = (\d+)/i);
-    if (match) {
-      const userId = parseInt(match[1], 10);
-      if (!isNaN(userId)) {
-        return userId;
-      }
-    }
-  }
 
-  // If the user ID is not found in the query, return null
-  return null;
-}
 
 // Apply the queryMiddleware to the Knex instance
 queryMiddleware(knexInstance);
