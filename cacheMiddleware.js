@@ -56,13 +56,13 @@ const cacheMiddleware = async (req, res, next) => {
 
         if (!data) return next();
         console.log("Fetched from Cache data");
-        res.cachedData = data;
+        res.cachedData = data;                      // forward the cached data to the api
         next();
     }
 
     if (req.method === "PUT" || req.method === "DELETE") {      // Check if it is a PUT or DELETE api request
         console.log("Deleted user data from cache")
-        redisClient.del(url);
+        redisClient.del(url);                               // delete from cache
         next();
     }
 

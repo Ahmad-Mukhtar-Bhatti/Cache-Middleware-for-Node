@@ -33,7 +33,6 @@ app.get('/users/:id', cacheMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // knexInstance.useCache = true;
     if (res.cachedData) {
       res.json(JSON.parse(res.cachedData));
       return;
