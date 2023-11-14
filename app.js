@@ -1,49 +1,43 @@
 const express = require('express');
-// const { knexInstance } = require('./middleware');
-const {cacheMiddleware, setCache, knexInstance} = require('./cacheMiddleware');
+// const knex = require('./cacheMiddleware');
 const app = express();
+
+const { development } = require("./knexfile");
+const knex = require("knex")(development);
+
+const { attach_useCache } = require('./cacheMiddleware');
+console.log('knexExtended loaded');
+attach_useCache();
+
 app.use(express.json());
 
-
-
-
-
-// Define whether you wish to use Cache or not
-knexInstance.useCache = false;
 // Route to retrieve all users
 app.get('/users', async (req, res) => {
   try {
-
     // knexInstance.useCache = true;
 
-    const users = await knexInstance.select('*').from('users');
+    const users = await knex.select('*').from('users');
+
     res.json(users);
-    console.log('Feteched all users from db');
+    // console.log('Feteched all users from db', users);
   } catch (error) {
+    console.log(error);
     res.status(500).json({ error: 'An error occurred' });
   }
 });
 
-
-
-
-
 // Route to retrieve a user by ID (no cache handling in this route)
-app.get('/users/:id', cacheMiddleware, async (req, res) => {
+app.get('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (res.cachedData) {
-      res.json(JSON.parse(res.cachedData));
-      return;
-    }
+    const user = await knex('users')
+      .select('*')
+      .where({ id })
+      .useCache({val:true})
 
-    const user = await knexInstance('users').select('*').where({ id });
-    setCache(req.originalUrl, user);
-
-    if (user) {
+    if (user.length != 0) {
       res.json(user);
-      console.log('Fetched from DB');
     } else {
       res.status(404).json({ error: 'User not found' });
     }
@@ -53,15 +47,12 @@ app.get('/users/:id', cacheMiddleware, async (req, res) => {
   }
 });
 
-
-
-
 // Route to add a new user (no cache handling in this route)
-app.post('/users',  async (req, res) => {
+app.post('/users', async (req, res) => {
   try {
     const { username, email } = req.body;
     // knexInstance.useCache = true;
-    const [userId] = await knexInstance('users').insert({ username, email });
+    const [userId] = await knex('users').insert({ username, email });
     res.json({ id: userId, username, email });
     console.log('Added a new user');
   } catch (error) {
@@ -71,16 +62,15 @@ app.post('/users',  async (req, res) => {
 });
 
 
-
-// Route to update a user (no cache handling in this route)
-app.put('/users/:id',cacheMiddleware, async (req, res) => {
+app.put('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { username, email } = req.body;
     // knexInstance.useCache = true;
-    const updatedUser = await knexInstance('users')
+    const updatedUser = await knex('users')
       .where({ id })
-      .update({ username, email });
+      .update({ username, email })
+      .useCache({val:true});
     if (updatedUser) {
       res.json({ message: 'User updated' });
     } else {
@@ -88,18 +78,16 @@ app.put('/users/:id',cacheMiddleware, async (req, res) => {
     }
   } catch (error) {
     res.status(500).json({ error: 'An error occurred' });
+    console.log(error);
   }
 });
 
 
-
-
-// Route to delete a user (no cache handling in this route)
-app.delete('/users/:id',cacheMiddleware, async (req, res) => {
+app.delete('/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
     // knexInstance.useCache = true;
-    const deletedUser = await knexInstance('users').where({ id }).del();
+    const deletedUser = await knex('users').where({ id }).del().useCache({val:true});
     if (deletedUser) {
       res.json({ message: 'User deleted' });
     } else {
@@ -107,6 +95,7 @@ app.delete('/users/:id',cacheMiddleware, async (req, res) => {
     }
   } catch (error) {
     res.status(500).json({ error: 'An error occurred' });
+    console.log(error);
   }
 });
 

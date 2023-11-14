@@ -23,10 +23,10 @@ Following is an overview of what the Cache middleware is supposed to do:\
 \
 **For GET requests:**\
 If the request is for the entire data, fetch the data directly from the database.\
-If the request is for a specific user, check if the user's key exists in the cache. If yes, return its data directly. if not, fetch it from the database, return it and additionally store it in the cache as well.\
+If the request is for a specific user or some users, check if the user's key exists in the cache. If yes, return its data directly. if not, fetch it from the database, return it and additionally store it in the cache as well.\
 \
 **For PUT & DELETE requests:**\
-Check if the user key exists in the cache. If it does, delete its data from the cache and perform the respective operation on the data in the database, otherwise just perform the respective operation on th database.
+Check if the user key exists in the cache. If it does, delete its data from the cache and perform the respective operation on the data in the database, otherwise just perform the respective operation on th database. You may additionally provide the key for the cached data and the operation will delete the corresponding data from the cache storage.
 
 
 
@@ -40,9 +40,9 @@ Before using the `cacheMiddleware`, make sure you have the following prerequisit
 You can install the middleware via npm or yarn:
 
 ```bash
-npm install ioredis knex cache-middleware
+npm install ioredis knex
 # OR
-yarn add ioredis knex cache-middleware
+yarn add ioredis knex
 ```
 
 
@@ -52,10 +52,10 @@ yarn add ioredis knex cache-middleware
 
 1. **Import Dependencies**:
 
-In your Node.js application, first, import the necessary dependencies:
+In your Node.js application, first, import the necessary dependencies (in `app.js` in our case`):
 
 ```javascript
-const { cacheMiddleware, setCache, knexInstance } = require('cache-middleware');
+const { attach_useCache } = require('cacheMiddleware');
 ```
 
 
@@ -64,8 +64,8 @@ const { cacheMiddleware, setCache, knexInstance } = require('cache-middleware');
 The middleware requires a Knex instance to perform database operations. Configure your Knex instance and include it in your project:
 
 ```javascript
-const knexConfig = require('./knexfile'); // Your Knex configuration
-const knexInstance = new ExtendedKnex(knexConfig.development);
+const { development } = require("./knexfile");
+const knex = require("knex")(development);
 ```
 A `knexfile.js` is present in the project which shows the configurations for knex. Modify that according to your requirement.
 
@@ -82,64 +82,46 @@ const redisClient = new redis({ // Use your configuration here
 });
 ```
 
+**Note:** The knex module has a singleton pattern, i.e., the same instance of this module will be loaded anywhere you require it in your project. For our project, you'll have ti iport it in both, the `cacheMiddleware.js` and 'app.js` files.
 
 ### Using the Middleware
 
 1. **Enable/Disable Caching**:
 
-The `knexInstance.useCache` property is used to enable or disable caching. By default, it is set to `true`. You can change it in your routes:
+To enable or disable the use of cache, you can chain your knex query with a `useCache` function to tell whether you want cache usage or not.
+Following is how you can achieve it:
 
 ```javascript
-knexInstance.useCache = true; // Enable caching
-knexInstance.useCache = false; // Disable caching
+   const user = await knex('users')
+      .select('*')
+      .where({ id })
+      .useCache({val:true})
 ```
-Set it to *true* to enable caching and *false* to disable it.
+2. **Use the Cache**:
 
-2. **Use the Cache Middleware**:
-Apply the `cacheMiddleware` as middleware in your route handlers:
+You can additonnally instruct the code whether you want to delete the cache associated with a certian key or not. Or, you could also instruct it to retrieve data from a given cache key. The subsection below it tells you how you could actually check chache keys. Nonetheless, following is how you can send cache keys:
 
 ```javascript
-app.get('/users/:id', cacheMiddleware, async (req, res) => {
-    // Your route logic here
-});
+const deletedUser = await knex('users')
+.where({ id })
+.del()
+.useCache({val:true, key: aa1f12c68588b14b2bf7e28716928263});
 ```
 
-The `cacheMiddleware` will handle caching based on the HTTP request method (GET, PUT, DELETE) and URL.
-You don't need to add this middleware to your PUT commands.
-
-
-3. **Using the setCache Function**:
-To manually set data in the cache, you can use the `setCache` function:
+The keys are cryptographically created in the the  `cacheMiddleware.js` file and you need to install and import the following dependency:
 
 ```javascript
-setCache(req.originalUrl, data);
+const crypto = require('crypto');
 ```
 
-This function accepts a URL and data as parameters and stores the data in the Redis cache. It only caches data if `knexInstance.useCache` is *true*.\
-You will have to add this function to the (specific) GET api nonetheless, since if a data isn't found in the cache, you fetch it from the Database and store it in the cache as well.\
-Following is what a typical specific GET request would look like:
+The following function creates cache keys:
+
 ```javascript
-app.get('/users/:id', cacheMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    if (res.cachedData) {
-      res.json(JSON.parse(res.cachedData));
-      return;
-    }
-    const user = await knexInstance('users').select('*').where({ id });
-    setCache(req.originalUrl, user);
-
-    if (user) {
-      res.json(user);
-    } else {
-      res.status(404).json({ error: 'User not found' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'An error occurred' });
-  }
-});
+function generateCacheKey(query) {
+    const queryString = query.toString();
+    return crypto.createHash("md5").update(queryString).digest("hex");
+}
 ```
-
 
 
 
@@ -147,9 +129,6 @@ app.get('/users/:id', cacheMiddleware, async (req, res) => {
 
 - To cache data for GET requests, make sure to apply the cacheMiddleware as middleware on the route handlers where you want caching to occur. you will also be required to modify your API code to accommodate the `setCache` function, as done above.
 
-- For routes that use other HTTP methods (PUT, DELETE), you will just need to implement caching logic within the route handlers.
-
-- For PUT and GET (all) method, you won't require cache since these operations are done directly on the DataBase.
 
 
 ### Viewing Cached Keys
@@ -169,25 +148,11 @@ Finally, enter `exit` to end the redis terminal.
 
 This middleware is responsible for handling caching based on HTTP methods and URL. It is used as a middleware in your route handlers to control caching behavior.
 
-### `setCache(url, data)`
-
-This function is used to manually set data in the Redis cache. It accepts a URL and data as parameters and stores the data in the cache, but only if caching is enabled.
-
-Following is the function:
-
-```javascript
-function setCache(url, data){         
-    if (knexInstance.useCache === true) {
-        redisClient.set(url, JSON.stringify(data), "EX", 3600);
-    }
-}
-```
-The 3600 means seconds, hence the cache is only being set for an hour in the example above. You may change it according to your needs.
 
 
-### `knexInstance`
+### `knex`
 
-An instance of the extended Knex class used for database operations. You can configure it with your Knex settings and control caching through its `useCache` property.
+An instance of the knex class used for database operations. You can configure it with your Knex settings and control caching through its `useCache` property.
 
 
 ## Examples

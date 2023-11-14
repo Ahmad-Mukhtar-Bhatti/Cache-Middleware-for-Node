@@ -1,89 +1,119 @@
-const knex = require("knex");
+const Knex = require("knex");
+const crypto = require('crypto');
+
 const redis = require("ioredis");
 
 
-const knexConfig = require("./knexfile");
-
-
-// Create a Knex instance using the specified configuration
-class ExtendedKnex extends knex {
-    constructor(config) {
-      super(config);
-      console.log("ExtendedKnex");
-      this.useCache = false;
-    }
-  
-    select(...args) {
-      const builder = super.select(...args);
-      builder._useCache = this._useCache;
-      return builder;
-    }
-  
-    set useCache(value) {
-      console.log("useCache value recieved", value);
-      this._useCache = value;
-    }
-    get useCache() {
-      return this._useCache;
-    }
-}
-  
-const knexInstance = new ExtendedKnex(knexConfig.development);
-  
-
 const redisClient = new redis({
-    host: "localhost", // Redis server host
-    port: 6379, // Redis server port
-    // Optional: password: 'your_password',
+  host: "localhost", // Redis server host
+  port: 6379, // Redis server port
+  // Optional: password: 'your_password',
 });
 
 
 
 
-const cacheMiddleware = async (req, res, next) => {
-  try {
+module.exports.attach_useCache = function attach_useCache() {
+    function useCache({val, key}) {
+        this._useCache = val;
 
-    if (knexInstance.useCache === false) {      // Checking if cache usage is allowed
-        console.log("Cache usage is off")
-        return next();
-    }
-    if (!redisClient) return next();            // Return if cache server isn't working
+        
+        if (val === true)
+            console.log("Using Cache");
+        
 
-    const url = req.originalUrl;
+        return this.client.transaction(async (trx) => {
 
-    if (req.method === "GET") {                 // Check if it is a GET api request
-        const data = await redisClient.get(url);
+            // console.log("statements", this._statements)
+            
+            try{
 
-        if (!data) return next();
-        console.log("Fetched from Cache data");
-        res.cachedData = data;                      // forward the cached data to the api
-        next();
-    }
+                // Performing without cache
+                if (!this._useCache){
+                    console.log("Not using cache")
 
-    if (req.method === "PUT" || req.method === "DELETE") {      // Check if it is a PUT or DELETE api request
-        console.log("Deleted user data from cache")
-        redisClient.del(url);                               // delete from cache
-        next();
-    }
+                    // Removing all data from cache if cache usage is off and something is updated or deleted from db
+                    // if (this._method === "update" || this._method === "del") {
+                    //     redisClient.flushall((err, response) => {
+                    //         if (err) {
+                    //             // Handle the error
+                    //         } else {
+                    //             console.log("All data cleared from Redis.");
+                    //         }
+                    //         });
+                    // }
 
-    
-  } catch (error) {
-    console.log("Error in the cache middleware", error);
-    next();
-  }
+                    const result = await this.transacting(trx);
+                    return result;
+                }
+                
+                if (this._method === "select") {
+                  
+                  // Check if the query is specific to a user (e.g., /users/1).
+                  const isUserSpecificQuery = ( (this._statements).length == 2);
+                  console.log("User specific query?:", isUserSpecificQuery);
+            
+                  if (isUserSpecificQuery) {
+                    // It's a user-specific query, and caching is enabled
+                    const cacheKey = `${generateCacheKey(this)}`
+                    console.log("Cache key is:", cacheKey)
+            
+            
+                    const cachedResult = await redisClient.get(cacheKey);
+                    if (cachedResult) {
+                        console.log("Cache hit!");
+                        return JSON.parse(cachedResult);
+
+                    } else {
+                        console.log("Cache miss!");
+                            
+                        // Fetching from the db now
+                        const result = await this.transacting(trx)
+                            
+                        redisClient.set(cacheKey, JSON.stringify(result), "EX", 3600);
+
+                        return result;
+                    }
+                  }
+                  else
+                    console.log("Not a user specific query");
+                  
+                } else if (this._method === "update" || this._method === "del") {
+                    // For 'update' and 'delete' queries, execute the quer
+                    const result = await this.transacting(trx)
+
+                    console.log("result", result)
+                
+                    // Determine the cache key to invalidate
+                    var cacheKey = 0;
+                    if (key){
+                        cacheKey = `${key}`
+                    }
+                    else{
+                        cacheKey = `${generateCacheKey(this)}`
+                    }
+                  
+                    const cacheKeyToInvalidate = `${cacheKey}`;
+            
+                    // Remove the cached data associated with the cache key
+                    redisClient.del(cacheKeyToInvalidate);
+                
+                    return result;
+                }
+              }
+              catch (error) {
+                console.log("Error in the cache middleware", error);
+                return;
+              }
+        });
 };
 
 
-function setCache(url, data){               // Function to set cache
-    if (knexInstance.useCache === true) {
-        redisClient.set(url, JSON.stringify(data), "EX", 3600);
-    }
+function generateCacheKey(query) {
+    const queryString = query.toString();
+    return crypto.createHash("md5").update(queryString).digest("hex");
 }
 
+Knex.QueryBuilder.extend("useCache", useCache);
+}
 
-
-module.exports = {
-  cacheMiddleware,
-  setCache,
-  knexInstance
-};
