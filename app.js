@@ -34,7 +34,7 @@ app.get('/users/:id', async (req, res) => {
     const user = await knex('users')
       .select('*')
       .where({ id })
-      .useCache({val:true})
+      .useCache({val:true, key:"527adf25b1189e91cfda2de8c49a1c39"})
 
     if (user.length != 0) {
       res.json(user);
@@ -70,7 +70,7 @@ app.put('/users/:id', async (req, res) => {
     const updatedUser = await knex('users')
       .where({ id })
       .update({ username, email })
-      .useCache({val:true});
+      .useCache({val:true, key:["527adf25b1189e91cfda2de8c49a1c39", "e2fc714c4727ee9395f324cd2e7f331f"]});
     if (updatedUser) {
       res.json({ message: 'User updated' });
     } else {

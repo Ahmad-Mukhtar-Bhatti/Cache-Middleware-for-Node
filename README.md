@@ -12,7 +12,8 @@
    - [Viewing Cached Keys](#viewing-cached-keys)
 4. [API](#api)
 5. [Examples](#examples)
-5. [Conclusion](#conclusion)
+6. [Running through Docker](#running-through-docker)
+7. [Conclusion](#conclusion)
 
 
 ## About
@@ -97,7 +98,25 @@ Following is how you can achieve it:
       .where({ id })
       .useCache({val:true})
 ```
+
+
 2. **Use the Cache**:
+
+Each query is stored against a key in the cache. All they keys are essentially hashed outputs. You may decide to manually decide the key that will be hashed to keep against the output, e.g:
+
+```javascript
+   const user = await knex('users')
+      .select('*')
+      .where({ id })
+      .useCache({val:true, key: "Getting data for user 3"})
+```
+
+The result of the query above will be stored in the cache against the hashed output of the string : `"Getting data for user 3"`
+
+If no key is provided, the result will be stored against the hashed output of the query object itself and the hashed key will be displayed on the console screen e.g.: `Cache key is: 527adf25b1189e91cfda2de8c49a1c39`
+
+While retrieving the data, you may either decide to give the string itself or the hashed value in the 'key' attribute, and for that, if the relevant data is retrieved, the result will be returned, else the result, if retrieved from the db, will be stored in the cache against the hash value of whatever was present inside the key attribute (so beware, if you write a hash value inside the key for which no corresponding data in cache storage is present, the data will be retrieved from the db and stored in cache, and its key will be the hash of the hashed value that you provided).
+
 
 You can additonnally instruct the code whether you want to delete the cache associated with a certian key or not. Or, you could also instruct it to retrieve data from a given cache key. The subsection below it tells you how you could actually check chache keys. Nonetheless, following is how you can send cache keys:
 
@@ -105,7 +124,13 @@ You can additonnally instruct the code whether you want to delete the cache asso
 const deletedUser = await knex('users')
 .where({ id })
 .del()
-.useCache({val:true, key: aa1f12c68588b14b2bf7e28716928263});
+.useCache({val:true, key: "aa1f12c68588b14b2bf7e28716928263"});
+```
+
+Additionally, some delete or update commands may require you to evict multiple key value pairs from the cache storage. For that purpose, you may decide to send multiple keys for eviction purposes. For example:
+
+```javascript
+.useCache({val:true, key: []"aa1f12c68588b14b2bf7e28716928263", "527adf25b1189e91cfda2de8c49a1c39"]});
 ```
 
 The keys are cryptographically created in the the  `cacheMiddleware.js` file and you need to install and import the following dependency:
@@ -162,6 +187,22 @@ To see a complete working example of how to use the `cacheMiddleware`, check the
 Log statements have been placed in the middleware and the APIs as well, hence you may try to play around with the code. 
 Try sending a couple of postman requests and you will notice how the middleware is operating.
 
+
+## Running through Docker
+
+The application is also Dockerized which allows you to run the application in an isolated container.
+
+To run the application in a container through docker, firstly open up the container in the directory for the applictaion (after cloning it from github). Then run the following commands on your terminal:
+
+```
+sudo docker pull ahmadmukhtar7/cache-middleware:v20
+
+sudo docker pull ahmadmukhtar7/redis:latest
+
+sudo docker compose up
+```
+
+The first two commands will pull the two images from the dockerhub repository that are required to run the application. The third command will run the docker-compose file on your system.
 
 
 ## Conclusion
