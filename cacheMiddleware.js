@@ -1,8 +1,4 @@
-const Knex = require("knex");
-const crypto = require('crypto');
-
 const redis = require("ioredis");
-
 
 const redisClient = new redis({
   host: "localhost", // Redis server host
@@ -10,141 +6,98 @@ const redisClient = new redis({
   // Optional: password: 'your_password',
 });
 
+module.exports.attach_useCache = function attach_useCache(Knex) {
+  function useCache(getKeyFunc, ttl) {
+    return this.client.transaction(async (trx) => {
+      if (
+        (!ttl && getKeyFunc === undefined) ||
+        typeof getKeyFunc !== "function"
+      ) {
+        ttl = 3600; // 1 hour
+      } else if (!ttl) ttl = 172800; // 2 days
 
+      
+      console.log('method: ', this._method)
 
+      try {
+        if (this._method === "select") {
+          //check if getKeyFunc is defined
+          if (getKeyFunc === undefined || typeof getKeyFunc !== "function") {
+            // if not defined, use the query as the key
+            key = this.toString();
+          } else {
+            key = getKeyFunc();
+          }
 
-module.exports.attach_useCache = function attach_useCache() {
-    function useCache({val, key}) {
-        this._useCache = val;
+          const cachedResult = await redisClient.hgetall(key);
+          console.log('Key: ',key,'\nCached result: ', cachedResult);
+          console.log('Result Length: ', Object.keys(cachedResult).length);
+          if (cachedResult && Object.keys(cachedResult).length !== 0) {
+            console.log("Cache hit!");
+            return cachedResult;
+          } else {
+            console.log("Cache miss!");
 
-        
-        if (val === true)
-            console.log("Using Cache");
-        
+            // Fetching from the db now
+            const result = await this.transacting(trx);
+            console.log("result", result);
+            flatArray = result.flatMap(obj => [obj.id, JSON.stringify(obj)]);
+            console.log("flatArray", flatArray);
 
-        return this.client.transaction(async (trx) => {
+            redisClient.hset(key, flatArray);
 
-            // console.log("statements", this._statements)
-            
-            try{
+            // set expiry for the key
+            redisClient.expire(key, ttl);
 
-                // Performing without cache
-                if (!this._useCache){
-                    console.log("Not using cache")
+            return result;
+          }
+        } else if (this._method === "update") {
+          if (getKeyFunc === undefined || typeof getKeyFunc !== "function") {
+            // throw error if getKeyFunc is not defined
+            throw new Error("getKeyFunc is not valid");
+          }
 
-                    // Removing all data from cache if cache usage is off and something is updated or deleted from db
-                    // if (this._method === "update" || this._method === "del") {
-                    //     redisClient.flushall((err, response) => {
-                    //         if (err) {
-                    //             // Handle the error
-                    //         } else {
-                    //             console.log("All data cleared from Redis.");
-                    //         }
-                    //         });
-                    // }
+          key = getKeyFunc();
 
-                    const result = await this.transacting(trx);
-                    return result;
-                }
-                
-                if (this._method === "select") {
-                  
-                  // Check if the query is specific to a user (e.g., /users/1).
-                  const isUserSpecificQuery = ( (this._statements).length == 2);
-                  console.log("User specific query?:", isUserSpecificQuery);
-            
-                  if (isUserSpecificQuery) {
-                    // It's a user-specific query, and caching is enabled
-                    var cacheKey = '';
+          // For 'update', execute the query
+          const result = await this.transacting(trx).returning("*");
+          console.log('result: ', result)
 
-                    if (key){
-                      
-                      // If user sends a cache key to retrieve its data, try fetching from that directly
-                      const cachedResult = await redisClient.get(key);
-                      if (cachedResult) {
-                          console.log("Cache hit!, data found against the provided key");
-                          return JSON.parse(cachedResult);
-                      }
-                      
-                      // If the cache key is not found, then generate a new cache key and find data in database to store against it
-                      cacheKey = `${generateCacheKey(key)}`
-                      console.log("User sent query converted to hash. Key was:", key)
-                    }
-                    else{
-                      cacheKey = `${generateCacheKey(this)}`
-                    }
-                    console.log("Cache key is:", cacheKey)
-            
-            
-                    const cachedResult = await redisClient.get(cacheKey);
-                    if (cachedResult) {
-                        console.log("Cache hit!");
-                        return JSON.parse(cachedResult);
+          // for update store the result in cache
+          redisClient.hset(key, result[0]);
 
-                    } else {
-                        console.log("Cache miss!");
-                            
-                        // Fetching from the db now
-                        const result = await this.transacting(trx)
-                            
-                        redisClient.set(cacheKey, JSON.stringify(result), "EX", 3600);
+          // set expiry for the key
+          redisClient.expire(key, ttl);
 
-                        return result;
-                    }
-                  }
-                  else
-                    console.log("Not a user specific query");
-                  
-                } else if (this._method === "update" || this._method === "del") {
-                    // For 'update' and 'delete' queries, execute the quer
-                    const result = await this.transacting(trx)
+          return result;
+        } else if (this._method === "del") {
+          if (getKeyFunc === undefined || typeof getKeyFunc !== "function") {
+            // throw error if getKeyFunc is not defined
+            throw new Error("getKeyFunc is not valid");
+          }
 
-                    console.log("result", result)
-                
-                    // Determine the cache key to invalidate
-                    // var cacheKey = [];
+          key = getKeyFunc();
 
-                    // // Checking whether the developer has sent a key
-                    // if (key){
-                    //   // Checking if multiple keys need to be evicted from the cache
-                    //   if (key.isArray()) {
-                    //     for (var i = 0; i < key.length; i++) {
-                    //       cacheKey.append(`${generateCacheKey(key[i])}`)
-                    //     }
-                    //   }
-                    //   else{
-                    //     cacheKey.append(`${key}`)
-                    //   }
-                    // }
+          // For 'update' and 'delete' queries, execute the query
+          const result = await this.transacting(trx);
 
-                    // Storing the keys to delete in a variable called cacheKey 
-                    const cacheKey = key;
-                    
-                    // Removing all cached keys that the developer sent
-                    if (cacheKey.length >= 1){    // Checking whether the user sent a single cache key or multiple
-                      for (var i = 0; i < cacheKey.length; i++) {
-                        const cacheKeyToInvalidate = `${cacheKey[i]}`;
-                        // Remove the cached data associated with the cache key
-                        redisClient.del(cacheKeyToInvalidate);
-                      }
-                    }
+          console.log('Result Del: ', result)
 
-                
-                    return result;
-                }
-              }
-              catch (error) {
-                console.log("Error in the cache middleware", error);
-                return;
-              }
-        });
+          // delete hash from redis
+          redisClient.del(key);
+
+          return result;
+        }
+        else{
+          const result = await this.transacting(trx);
+          return result;
+        }
+      } catch (error) {
+        console.log("Error in the cache middleware", error);
+        return;
+      }
+    });
+  }
+  console.log('Knex: ', Knex)
+  Knex.QueryBuilder.extend("useCache", useCache);
 };
-
-
-function generateCacheKey(query) {
-    const queryString = query.toString();
-    return crypto.createHash("md5").update(queryString).digest("hex");
-}
-
-Knex.QueryBuilder.extend("useCache", useCache);
-}
